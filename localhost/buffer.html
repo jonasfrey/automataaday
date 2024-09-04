@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGL Cellular Automata</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="glCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('glCanvas');
+        const gl = canvas.getContext(
+            'webgl2', 
+            {
+                desynchronized: false, //
+            }
+        );
+
+        if (!gl) {
+            alert('Unable to initialize WebGL. Your browser may not support it.');
+        }
+
+        const vertexShaderSource = `
+            attribute vec2 a_position;
+            varying vec2 v_texCoord;
+            void main() {
+                gl_Position = vec4(a_position, 0.0, 1.0);
+                v_texCoord = (a_position + 1.0) / 2.0;
+            }
+        `;
+
+        const fragmentShaderSource = `
+            precision highp float;
+            uniform sampler2D u_texture;
+            varying vec2 v_texCoord;
+            
+            void main() {
+                // Sample the previous frame
+                vec4 prevState = texture2D(u_texture, v_texCoord);
+                
+                // TODO: Implement your cellular automata rules here
+                // This is a placeholder rule (inverting the color)
+                float newState = (prevState.x > .5) ? 0.0: 1.0;
+                
+                gl_FragColor = vec4(vec3(newState), 1.);
+            }
+        `;
+
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('An error occurred compiling the shaders: ' + gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            console.error('Unable to initialize the shader program: ' + gl.getProgramInfoLog(program));
+        }
+
+        const positionAttributeLocation = gl.getAttribLocation(program, 'a_position');
+        const positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        const positions = [
+            -1, -1,
+             1, -1,
+            -1,  1,
+             1,  1,
+        ];
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+
+        // Create and set up textures
+        const textures = [gl.createTexture(), gl.createTexture()];
+        const framebuffers = [gl.createFramebuffer(), gl.createFramebuffer()];
+
+        function setupTexture(texture, framebuffer) {
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            
+            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+        }
+
+        setupTexture(textures[0], framebuffers[0]);
+        setupTexture(textures[1], framebuffers[1]);
+
+        // Initialize with random data
+        const initialData = new Uint8Array(canvas.width * canvas.height * 4);
+        for (let i = 0; i < initialData.length; i++) {
+            initialData[i] = Math.random() * 256;
+        }
+        gl.bindTexture(gl.TEXTURE_2D, textures[0]);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, initialData);
+
+        let currentTextureIndex = 0;
+
+        let n = 0;
+        let n_ms_last = 0;
+        let n_fps = 240;
+        let n_ms_max = 1000/n_fps;
+        function render(n_ms) {
+            // console.log(`n_ms:${n_ms}`)
+            nid = requestAnimationFrame(render);
+
+            let n_ms_delta = n_ms-n_ms_last;
+
+            console.log(`n_fps: ${1000/n_ms_delta})`);
+            n_ms_last = n_ms
+            n += 1;
+
+            // if(n_ms_delta > n_ms_max){
+                const nextTextureIndex = 1 - currentTextureIndex;
+
+
+
+                gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[nextTextureIndex]);
+                gl.viewport(0, 0, canvas.width, canvas.height);
+
+                gl.useProgram(program);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+                gl.enableVertexAttribArray(positionAttributeLocation);
+                gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, textures[currentTextureIndex]);
+
+                gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+                // Swap textures
+                currentTextureIndex = nextTextureIndex;
+
+                // Render to the canvas
+                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                gl.viewport(0, 0, canvas.width, canvas.height);
+                gl.bindTexture(gl.TEXTURE_2D, textures[currentTextureIndex]);
+                gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+            // }
+
+
+        }
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            setupTexture(textures[0], framebuffers[0]);
+            setupTexture(textures[1], framebuffers[1]);
+            gl.viewport(0, 0, canvas.width, canvas.height);
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+        let nid = 0;
+        nid = requestAnimationFrame(render);
+    </script>
+</body>
+</html>
+
+<!-- i still get console output like this 
+n_fps: 250) buffer.html:123:21
+714 buffer.html:150:21
+n_fps: 200) buffer.html:123:21
+715 buffer.html:150:21
+n_fps: 333.3333333333333) buffer.html:123:21
+716 buffer.html:150:21
+n_fps: 200) buffer.html:123:21 -->
